@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Claude Meter — Claude Code subscription usage at a glance.">
+  <meta name="theme-color" content="#0A0A0A">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Claude Meter">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <title>Claude Meter</title>
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0A0A0A;
+      overflow: hidden;
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+  </style>
+
+  <!-- Cloudflare Worker URL (edit after running `wrangler deploy`). -->
+  <script src="proxy_url.js"></script>
+</head>
+<body>
+  <script>
+    // Request fullscreen + landscape on the first user gesture. Browsers
+    // require a real gesture for both, so we attach a one-shot listener.
+    function _claudeMeterEnterFullscreen() {
+      window.removeEventListener('pointerdown', _claudeMeterEnterFullscreen);
+      const el = document.documentElement;
+      const req = el.requestFullscreen
+        ? el.requestFullscreen.bind(el)
+        : el.webkitRequestFullscreen
+          ? el.webkitRequestFullscreen.bind(el)
+          : null;
+      if (req) {
+        Promise.resolve(req()).then(() => {
+          if (screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock('landscape').catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    }
+    window.addEventListener('pointerdown', _claudeMeterEnterFullscreen, { once: true });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

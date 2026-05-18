@@ -1,0 +1,6 @@
+name = "claude-meter"
+main = "index.js"
+compatibility_date = "2026-05-01"
+
+# `wrangler deploy` will print the URL (https://claude-meter.<your-subdomain>.workers.dev)
+# Copy that URL into web/proxy_url.js so the web build calls it.

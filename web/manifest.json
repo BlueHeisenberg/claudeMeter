@@ -1,0 +1,36 @@
+{
+    "name": "Claude Meter",
+    "short_name": "Claude Meter",
+    "start_url": ".",
+    "display": "fullscreen",
+    "display_override": ["fullscreen", "standalone", "minimal-ui"],
+    "background_color": "#0A0A0A",
+    "theme_color": "#0A0A0A",
+    "description": "Claude Code subscription usage at a glance.",
+    "orientation": "landscape",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
