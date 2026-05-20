@@ -1,8 +1,12 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'auth.dart';
+import 'local_callback.dart';
 import 'mascot.dart';
 
 const _bg = Color(0xFF0A0A0A);
@@ -19,28 +23,185 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginPageState extends State<LoginPage> with WidgetsBindingObserver {
   bool _busy = false;
   String? _error;
+  String _status = '';
+
+  // Web-only: pending PKCE state used by the on-resume clipboard sniffer.
+  PkcePair? _pendingPkce;
+  String? _pendingState;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        kIsWeb &&
+        _pendingPkce != null &&
+        _pendingState != null) {
+      // User returned to the app after signing in via the browser.
+      // Try to auto-complete using the clipboard.
+      _tryClipboardAutoComplete();
+    }
+  }
 
   Future<void> _startLogin() async {
     setState(() {
       _error = null;
       _busy = true;
+      _status = 'Opening browser…';
     });
     final pkce = PkcePair.generate();
     final state = randomState();
-    final url = buildAuthorizeUri(
-      codeChallenge: pkce.challenge,
-      state: state,
-    );
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+
+    if (kLocalCallbackSupported) {
+      await _localhostFlow(pkce, state);
+    } else {
+      await _webFlow(pkce, state);
+    }
+  }
+
+  Future<void> _localhostFlow(PkcePair pkce, String state) async {
+    final server = LocalCallbackServer();
+    int port;
+    try {
+      port = await server.start();
+    } catch (e) {
       setState(() {
         _busy = false;
-        _error = 'Could not open browser.';
+        _error = 'Could not start local callback server: $e';
       });
       return;
     }
+    final redirectUri = 'http://localhost:$port/callback';
+    final authorizeUri = buildAuthorizeUri(
+      codeChallenge: pkce.challenge,
+      state: state,
+      redirectUri: redirectUri,
+    );
+
+    if (!await launchUrl(authorizeUri, mode: LaunchMode.externalApplication)) {
+      await server.close();
+      setState(() {
+        _busy = false;
+        _error = 'Could not open the browser.';
+      });
+      return;
+    }
+
+    setState(() => _status = 'Waiting for sign-in…');
+
+    LocalCallbackResult result;
+    try {
+      result = await server.waitForCallback(
+        timeout: const Duration(minutes: 5),
+      );
+    } catch (e) {
+      setState(() {
+        _busy = false;
+        _error = 'Sign-in timed out or was canceled.';
+      });
+      return;
+    }
+
+    if (result.error != null) {
+      setState(() {
+        _busy = false;
+        _error = 'OAuth error: ${result.error}';
+      });
+      return;
+    }
+    if (result.state != state) {
+      setState(() {
+        _busy = false;
+        _error = 'State mismatch — possible CSRF, please try again.';
+      });
+      return;
+    }
+    if (result.code == null) {
+      setState(() {
+        _busy = false;
+        _error = 'No code returned.';
+      });
+      return;
+    }
+
+    await _completeExchange(
+      code: result.code!,
+      state: state,
+      verifier: pkce.verifier,
+      redirectUri: redirectUri,
+    );
+  }
+
+  Future<void> _webFlow(PkcePair pkce, String state) async {
+    _pendingPkce = pkce;
+    _pendingState = state;
+    final authorizeUri = buildAuthorizeUri(
+      codeChallenge: pkce.challenge,
+      state: state,
+    );
+
+    if (!await launchUrl(authorizeUri, mode: LaunchMode.externalApplication)) {
+      _pendingPkce = null;
+      _pendingState = null;
+      setState(() {
+        _busy = false;
+        _error = 'Could not open the browser.';
+      });
+      return;
+    }
+
+    setState(() => _status = 'Waiting for sign-in… return here when done.');
+    // The didChangeAppLifecycleState handler will trigger _tryClipboardAutoComplete
+    // when the user comes back. If auto-complete fails (empty clipboard), the
+    // user can tap "I copied the code" to invoke the paste dialog manually.
+  }
+
+  Future<void> _tryClipboardAutoComplete() async {
+    final pkce = _pendingPkce;
+    final state = _pendingState;
+    if (pkce == null || state == null) return;
+    final data = await Clipboard.getData('text/plain');
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty) {
+      // Fall back to the paste dialog.
+      await _promptPaste(pkce, state);
+      return;
+    }
+    String code = text;
+    String returnedState = state;
+    if (code.contains('#')) {
+      final parts = code.split('#');
+      code = parts[0].trim();
+      returnedState = parts[1].trim();
+    }
+    if (returnedState != state ||
+        code.length < 16 ||
+        code.contains(' ') ||
+        code.contains('\n')) {
+      // Doesn't look like our code; show the paste dialog so user can intervene.
+      await _promptPaste(pkce, state);
+      return;
+    }
+    // Clear pending so resume doesn't re-fire.
+    _pendingPkce = null;
+    _pendingState = null;
+    await _completeExchange(code: code, state: state, verifier: pkce.verifier);
+  }
+
+  Future<void> _promptPaste(PkcePair pkce, String state) async {
     if (!mounted) return;
     final pasted = await showDialog<String>(
       context: context,
@@ -49,7 +210,12 @@ class _LoginPageState extends State<LoginPage> {
     );
     if (!mounted) return;
     if (pasted == null || pasted.trim().isEmpty) {
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _status = '';
+      });
+      _pendingPkce = null;
+      _pendingState = null;
       return;
     }
     String code = pasted.trim();
@@ -66,19 +232,24 @@ class _LoginPageState extends State<LoginPage> {
       });
       return;
     }
-    await _completeExchange(code, returnedState, pkce.verifier);
+    _pendingPkce = null;
+    _pendingState = null;
+    await _completeExchange(code: code, state: state, verifier: pkce.verifier);
   }
 
-  Future<void> _completeExchange(
-    String code,
-    String state,
-    String verifier,
-  ) async {
+  Future<void> _completeExchange({
+    required String code,
+    required String state,
+    required String verifier,
+    String? redirectUri,
+  }) async {
+    setState(() => _status = 'Finishing sign-in…');
     try {
       final tokens = await exchangeCodeForTokens(
         code: code,
         state: state,
         codeVerifier: verifier,
+        redirectUri: redirectUri,
       );
       await widget.store.save(tokens);
       if (!mounted) return;
@@ -159,7 +330,7 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                       child: Text(
-                        _busy ? 'Waiting for browser…' : 'Sign in with Claude',
+                        _busy ? _status : 'Sign in with Claude',
                         style: const TextStyle(
                           fontFamily: 'serif',
                           fontSize: 16,
@@ -168,16 +339,21 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Opens your browser. After signing in (Google, email, or any provider), copy the code from the success page and paste it here.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontFamily: 'serif',
-                      fontSize: 11,
-                      color: _textDim,
+                  if (kIsWeb && _busy && _pendingPkce != null) ...[
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: () {
+                        final pkce = _pendingPkce!;
+                        final state = _pendingState!;
+                        _promptPaste(pkce, state);
+                      },
+                      style: TextButton.styleFrom(foregroundColor: _textDim),
+                      child: const Text(
+                        'Paste the code manually',
+                        style: TextStyle(fontFamily: 'serif', fontSize: 13),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -207,7 +383,6 @@ class _PasteCodeDialogState extends State<_PasteCodeDialog> {
     final data = await Clipboard.getData('text/plain');
     final text = data?.text?.trim();
     if (text == null || text.isEmpty) return;
-    // Heuristic: long OAuth code, optionally `code#state`.
     if (text.length >= 16 && !text.contains(' ') && !text.contains('\n')) {
       _ctrl.text = text;
     }

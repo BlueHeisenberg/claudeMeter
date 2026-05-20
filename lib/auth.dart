@@ -109,12 +109,13 @@ String randomState() {
 Uri buildAuthorizeUri({
   required String codeChallenge,
   required String state,
+  String? redirectUri,
 }) {
   return Uri.parse(OAuthConfig.authorizeUrl).replace(queryParameters: {
     'code': 'true',
     'client_id': OAuthConfig.clientId,
     'response_type': 'code',
-    'redirect_uri': OAuthConfig.redirectUri,
+    'redirect_uri': redirectUri ?? OAuthConfig.redirectUri,
     'scope': OAuthConfig.scopes.join(' '),
     'code_challenge': codeChallenge,
     'code_challenge_method': 'S256',
@@ -133,6 +134,7 @@ Future<Tokens> exchangeCodeForTokens({
   required String code,
   required String state,
   required String codeVerifier,
+  String? redirectUri,
 }) async {
   final res = await http
       .post(
@@ -141,7 +143,7 @@ Future<Tokens> exchangeCodeForTokens({
         body: jsonEncode({
           'grant_type': 'authorization_code',
           'code': code,
-          'redirect_uri': OAuthConfig.redirectUri,
+          'redirect_uri': redirectUri ?? OAuthConfig.redirectUri,
           'client_id': OAuthConfig.clientId,
           'code_verifier': codeVerifier,
           'state': state,
