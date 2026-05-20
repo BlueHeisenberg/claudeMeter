@@ -16,12 +16,12 @@ class OAuthConfig {
   static const String authorizeUrl = 'https://claude.ai/oauth/authorize';
   static const String redirectUri =
       'https://platform.claude.com/oauth/code/callback';
+  // Reading /api/oauth/usage only needs the minimum scope set — identifying
+  // the user and being recognized as a valid API token. Drops the CLI's
+  // file_upload, mcp_servers, and sessions scopes that this app never uses.
   static const List<String> scopes = [
-    'user:file_upload',
-    'user:inference',
-    'user:mcp_servers',
     'user:profile',
-    'user:sessions:claude_code',
+    'user:inference',
   ];
 
   // On Android we hit Anthropic directly; on web we go through our

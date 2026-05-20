@@ -121,9 +121,11 @@ and behaves like a native one.
 | OAuth redirect   | `https://platform.claude.com/oauth/code/callback`   |
 | Usage            | `https://api.anthropic.com/api/oauth/usage`         |
 
-OAuth client ID `9d1c250a-…` is the public Claude Code CLI client. Scopes
-match the CLI exactly: `user:file_upload user:inference user:mcp_servers
-user:profile user:sessions:claude_code`.
+OAuth client ID `9d1c250a-…` is the public Claude Code CLI client. We
+request only the minimum scopes needed to read usage: `user:profile
+user:inference`. The CLI itself also requests `user:file_upload`,
+`user:mcp_servers`, and `user:sessions:claude_code` for its own features
+— this app doesn't.
 
 ## License
 
